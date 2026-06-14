@@ -19,7 +19,7 @@ tx = as_tibble(tx) %>%
 txi_gene = tximport(
   path,
   type = "kallisto",
-  tx2gene = tx,                 # 🌟 Changed 'txIn' to 'tx2gene' and used capital 'Tx'
+  tx2gene = tx,                
   txOut = FALSE, 
   countsFromAbundance = "lengthScaledTPM",
   ignoreTxVersion = TRUE

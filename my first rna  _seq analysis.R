@@ -6,9 +6,8 @@ library(EnsDb.Hsapiens.v86)
 library(ensembldb)
 
 
-
-path <- file.path("mappedReads", targets$sample, "abundance.tsv")
 targets=read_tsv("studydesign.txt",col_names=T)
+path <- file.path("mappedReads", targets$sample, "abundance.tsv")
 file.exists(path)
 
 
@@ -63,8 +62,10 @@ p1=ggplot(cpm_log_df_pivot)+
   theme_bw()+
   coord_flip()
 keeps=rowSums(cpm>1)>=5
-mydgelist_filtered=DGEList(cpm[keeps,])
+
+mydgelist_filtered=DGEList(mycounts[keeps,])
 mydgelist_filtered_norm=calcNormFactors(mydgelist_filtered,method = "TMM")
+
 mydgelist_filtered_norm_cpm=cpm(mydgelist_filtered_norm,log=TRUE)
 mydgelist_filtered_norm_cpm_df=as_tibble(mydgelist_filtered_norm_cpm,rownames="geneID")
 colnames(mydgelist_filtered_norm_cpm_df)=c("geneID",samplelabels)
@@ -88,7 +89,7 @@ group=targets$group
 group=factor(group)
 
 #denodogram plot
-distance=dist(t(mydgelist_filtered_norm_cpm),method ="maximum" )
+distance=dist(t(mydgelist_filtered_norm_cpm),method ="euclidean" )
 clusters=hclust(distance,method = "average")
 plot(clusters,labels = samplelabels,main="Hierarchical clustering")
 

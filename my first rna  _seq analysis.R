@@ -1,5 +1,5 @@
 #library step----
-library(biomaRt)
+library(limma)
 library(tidyverse)
 library(tximport)
 library(EnsDb.Hsapiens.v86)
@@ -7,8 +7,24 @@ library(ensembldb)
 
 
 targets=read_tsv("studydesign.txt",col_names=T)
+required_columns <- c("sample", "group")
+if (!all(required_columns %in% names(targets))) {
+  stop("studydesign.txt must contain sample and group columns.")
+}
+if (anyNA(targets[, required_columns]) || anyDuplicated(targets$sample)) {
+  stop("Sample identifiers must be unique and sample/group values must not be missing.")
+}
+if (!setequal(unique(targets$group), c("healthy", "disease"))) {
+  stop("This analysis expects healthy and disease groups.")
+}
+if (any(table(targets$group) < 2)) {
+  stop("At least two biological replicates per group are required.")
+}
 path <- file.path("mappedReads", targets$sample, "abundance.tsv")
-file.exists(path)
+names(path) <- targets$sample
+if (!all(file.exists(path))) {
+  stop("Missing Kallisto abundance files: ", paste(path[!file.exists(path)], collapse = ", "))
+}
 
 
 tx=transcripts(EnsDb.Hsapiens.v86,columns=c("tx_id", "gene_name"))
@@ -18,8 +34,8 @@ tx = as_tibble(tx) %>%
 txi_gene = tximport(
   path,
   type = "kallisto",
-  tx2gene = tx,                
-  txOut = FALSE, 
+  tx2gene = tx,
+  txOut = FALSE,
   countsFromAbundance = "lengthScaledTPM",
   ignoreTxVersion = TRUE
 )
@@ -51,7 +67,7 @@ cpm=cpm(mydgelist)
 cpm_log=cpm(mydgelist,log = TRUE)
 cpm_log_df=as_tibble(cpm_log,rownames="geneID")
 colnames(cpm_log_df) <- c("geneID", samplelabels)
-cpm_log_df_pivot=pivot_longer(cpm_log_df,cols = HS01:CL13,
+cpm_log_df_pivot=pivot_longer(cpm_log_df,cols = all_of(samplelabels),
                               names_to = "samples",
                               values_to = "expression")
 p1=ggplot(cpm_log_df_pivot)+
@@ -70,10 +86,10 @@ mydgelist_filtered_norm_cpm=cpm(mydgelist_filtered_norm,log=TRUE)
 mydgelist_filtered_norm_cpm_df=as_tibble(mydgelist_filtered_norm_cpm,rownames="geneID")
 colnames(mydgelist_filtered_norm_cpm_df)=c("geneID",samplelabels)
 mydgelist_filtered_norm_cpm_df_pivot=pivot_longer(mydgelist_filtered_norm_cpm_df,
-                                                  cols=HS01:CL13,
+                                                  cols=all_of(samplelabels),
                                                   names_to = "samples",
                                                   values_to = "expression")
-view(mydgelist_filtered_norm_cpm)
+# Normalized log-CPM values are available in mydgelist_filtered_norm_cpm.
 p2=ggplot(mydgelist_filtered_norm_cpm_df_pivot)+
   aes(x=samples,y=expression,fill = samples)+
   geom_violin(trim = FALSE,show.legend = FALSE)+
@@ -103,22 +119,23 @@ pca.per=round(pca.var/sum(pca.var)*100,1)
 pca.res.df = as_tibble(pca.res$x)
 
 ggplot(pca.res.df) +
-  aes(x = PC1, y = PC2, color = samplelabels) + 
-  geom_point(size = 5) +                        
+  aes(x = PC1, y = PC2, color = samplelabels) +
+  geom_point(size = 5) +
   theme_bw() +
   xlab(paste0("PC1 (", pca.per[1], "%)")) +
   ylab(paste0("PC2 (", pca.per[2], "%)")) +
   ggtitle("PCA plot")
 
 #small multiple charts
-pca.res.df=as_tibble(pca.res$x[,1:4])
+pc_columns <- colnames(pca.res$x)[seq_len(min(4L, ncol(pca.res$x)))]
+pca.res.df=as_tibble(pca.res$x[, pc_columns, drop = FALSE])
 pca.res.df.pivot = pca.res.df %>%
   add_column(samples = samplelabels,
              type = group) %>%
-  
-  pivot_longer(cols = PC1:PC4,          
+
+  pivot_longer(cols = all_of(pc_columns),
                names_to = "PC",
-               values_to = "scores") 
+               values_to = "scores")
 ggplot(pca.res.df.pivot)+
   aes(x=samples,y=scores)+
   geom_bar(stat = "identity",aes(fill=type))+
@@ -127,12 +144,12 @@ ggplot(pca.res.df.pivot)+
 
 #logfc
 mydata.df=mydgelist_filtered_norm_cpm_df %>%
-  mutate(avghealthy=(HS01 + HS02 + HS03 + HS04 + HS05)/5,
-         avgdisease=(CL08 + CL10 + CL11 + CL12 + CL13)/5,
+  mutate(avghealthy=rowMeans(mydgelist_filtered_norm_cpm[, group == "healthy", drop = FALSE]),
+         avgdisease=rowMeans(mydgelist_filtered_norm_cpm[, group == "disease", drop = FALSE]),
          logfc=(avgdisease-avghealthy))%>%
   mutate_if(is.numeric,round,2)
 
-myplot <- ggplot(mydata.df) + 
+myplot <- ggplot(mydata.df) +
   aes(x=avghealthy, y=avgdisease,text=geneID) +
   geom_point(shape=16, size=1) +
   ggtitle("disease vs. healthy") +
@@ -187,24 +204,25 @@ rownames(my_annotation) = samplelabels
 colnames(sig_mat) = rownames(my_annotation)
 
 pheatmap(sig_mat,
-         scale = "row",         
+         scale = "row",
          annotation_col = my_annotation,
          color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(100),
-         show_rownames = FALSE, 
-         cluster_cols = TRUE,    
+         show_rownames = FALSE,
+         cluster_cols = TRUE,
          main = "Significant Differentially Expressed Genes")
 
 #functional enrichment----
 library(clusterProfiler)
-library(org.Hs.eg.db) 
+library(org.Hs.eg.db)
 
 sig_gene_names = diff_gene_df$geneID
 
 go_results = enrichGO(gene          = sig_gene_names,
+                      universe      = rownames(mydgelist_filtered_norm),
                       OrgDb         = org.Hs.eg.db,
-                      keyType       = "SYMBOL", 
-                      ont           = "BP",     
-                      pAdjustMethod = "BH",     
+                      keyType       = "SYMBOL",
+                      ont           = "BP",
+                      pAdjustMethod = "BH",
                       pvalueCutoff  = 0.05,
                       qvalueCutoff  = 0.05)
 
@@ -223,6 +241,9 @@ up_regulated_genes = top.genes_df %>%
 down_regulated_genes = top.genes_df %>%
   filter(adj.P.Val < 0.01 & logFC <= -2)
 
-write_tsv(top.genes_df, "DGE_all_genes_results.tsv") 
+write_tsv(top.genes_df, "DGE_all_genes_results.tsv")
 write_csv(up_regulated_genes, "up_regulated_genes.csv")
 write_csv(down_regulated_genes, "down_regulated_genes.csv")
+
+# Record the R and package versions used for this run.
+writeLines(capture.output(sessionInfo()), "sessionInfo.txt")

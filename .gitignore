@@ -1,0 +1,10 @@
+# Local study inputs and generated analysis files
+/mappedReads/
+/studydesign.txt
+/DGE_all_genes_results.tsv
+/up_regulated_genes.csv
+/down_regulated_genes.csv
+/sessionInfo.txt
+/Rplots.pdf
+.Rhistory
+.RData
